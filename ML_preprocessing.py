@@ -58,7 +58,7 @@ def fetch_crypto_data(symbol: str, timeframe: str, start_date: str) -> pd.DataFr
     return df
 
 
-def add_target(df: pd.DataFrame, symbol: str, day_to_forecast: int) -> pd.DataFrame:
+def add_regression_target(df: pd.DataFrame, symbol: str, day_to_forecast: int) -> pd.DataFrame:
     """
     Adds a target column to the DataFrame for forecasting.
 
@@ -193,7 +193,7 @@ def get_features_and_target(
         features_df[f"{symbol}_aroon_down_delta_{lag}"] = aroon_down.diff(lag)
 
     # Add target and handle missing values
-    features_df = add_target(features_df, symbol, day_to_forecast)
+    features_df = add_regression_target(features_df, symbol, day_to_forecast)
     features_df.drop(
         columns=[
             f"{symbol}_open",
@@ -214,17 +214,20 @@ def prepare_data_for_ML(
     symbol: str,
     feature_lags: List[int] = [3, 9, 16],
     day_to_forecast: int = 7,
-    random_state = 99,
+    random_state: int = 99,
     fetch_data_params: Optional[Dict[str, any]] = None,
+    testing_hours: Optional[int] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     """
     Prepares data for machine learning by generating features and splitting into train and test sets.
 
-    :param symbol: The symbol for the cryptocurrency pair.
+    :param symbol: The symbol for the cryptocurrency pair (e.g., 'BTC/USDT').
     :param feature_lags: List of integers representing the lags for feature generation.
-    :param day_to_forecast: Number of days to forecast.
-    :param fetch_data_params: Optional dictionary of parameters to pass to the fetch_crypto_data function.
-    :return: Tuple of (X_train, X_test, y_train, y_test).
+    :param day_to_forecast: Number of days ahead to forecast.
+    :param random_state: An integer seed for random number generator for reproducible splits. Used only when 'testing_hours' is None.
+    :param fetch_data_params: Optional dictionary of parameters to pass to the fetch_crypto_data function. If provided, new data is fetched using these parameters.
+    :param testing_hours: Optional integer specifying the number of latest data points to use for the test set. If provided, splits the data into training and test sets based on this value. If None, performs a standard train-test split.
+    :return: Tuple of (X_train, X_test, y_train, y_test), where 'X' contains the features and 'y' is the target variable.
     """
     symbol_modified = symbol.replace("/", ":")
 
@@ -236,9 +239,18 @@ def prepare_data_for_ML(
     X = df.drop(columns=f"{symbol_modified}_target")
     y = df[f"{symbol_modified}_target"].copy()
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.15, random_state=random_state
-    )
+    if testing_hours:
+        X_train, X_test, y_train, y_test = (
+            X[:-testing_hours],
+            X[-testing_hours:],
+            y[:-testing_hours],
+            y[-testing_hours:],
+        )
+
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.15, random_state=random_state
+        )
 
     return (X_train, X_test, y_train, y_test)
 
