@@ -4,6 +4,8 @@ import numpy as np
 import talib
 from sklearn.model_selection import train_test_split
 from typing import List, Tuple, Optional, Dict
+import tensorflow as tf
+from sklearn.preprocessing import StandardScaler
 
 
 def fetch_crypto_data(symbol: str, timeframe: str, start_date: str) -> pd.DataFrame:
@@ -58,7 +60,9 @@ def fetch_crypto_data(symbol: str, timeframe: str, start_date: str) -> pd.DataFr
     return df
 
 
-def add_regression_target(df: pd.DataFrame, symbol: str, day_to_forecast: int) -> pd.DataFrame:
+def add_regression_target(
+    df: pd.DataFrame, symbol: str, day_to_forecast: int
+) -> pd.DataFrame:
     """
     Adds a target column to the DataFrame for forecasting.
 
@@ -75,8 +79,25 @@ def add_regression_target(df: pd.DataFrame, symbol: str, day_to_forecast: int) -
     return df
 
 
+def add_LSTM_target(
+    df: pd.DataFrame, symbol: str, day_to_forecast: int
+) -> pd.DataFrame:
+    symbol = symbol.replace("/", ":")
+    days_to_shift = day_to_forecast * 24
+    df[f"{symbol}_target"] = (
+        df[f"{symbol}_close"]
+        .pct_change(periods=days_to_shift)
+        .shift(-(days_to_shift - 1))
+    )
+
+    return df
+
+
 def get_features_and_target(
-    symbol: str, feature_lags: List[int] = [3, 9, 16], day_to_forecast: int = 7
+    symbol: str,
+    feature_lags: List[int] = [3, 9, 16],
+    day_to_forecast: int = 7,
+    model="ML",
 ) -> pd.DataFrame:
     """
     Generates features and target variable for the given cryptocurrency symbol.
@@ -84,6 +105,7 @@ def get_features_and_target(
     :param symbol: The symbol for the cryptocurrency pair.
     :param feature_lags: List of integers representing the lags for feature generation.
     :param day_to_forecast: Number of days to forecast.
+    :param model: ML or LSTM, changes how the target is encoded
     :return: DataFrame with features and target.
     """
     symbol = symbol.replace("/", ":")
@@ -193,7 +215,13 @@ def get_features_and_target(
         features_df[f"{symbol}_aroon_down_delta_{lag}"] = aroon_down.diff(lag)
 
     # Add target and handle missing values
-    features_df = add_regression_target(features_df, symbol, day_to_forecast)
+    if model == "ML":
+        features_df = add_regression_target(features_df, symbol, day_to_forecast)
+    elif model == "LSTM":
+        features_df = add_LSTM_target(features_df, symbol, day_to_forecast)
+    else:
+        raise ValueError("not supported model")
+
     features_df.drop(
         columns=[
             f"{symbol}_open",
@@ -210,7 +238,7 @@ def get_features_and_target(
     return features_df
 
 
-def prepare_data_for_ML(
+def get_ML_dfs(
     symbol: str,
     feature_lags: List[int] = [3, 9, 16],
     day_to_forecast: int = 7,
@@ -255,6 +283,68 @@ def prepare_data_for_ML(
     return (X_train, X_test, y_train, y_test)
 
 
-# Example usage:
-# params = {'timeframe': '1h', 'start_date': '2015-01-01'}
-# X_train, X_test, y_train, y_test = prepare_data_for_ML("BTC/USDT", fetch_data_params=params)
+def get_LSTM_dfs(
+    symbol: str = "BTC/USDT",
+    valid_split: int = 1000,
+    train_length: int = 48,
+    batch_size: int = 32,
+    seed: int = None,
+) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
+    """
+    Prepares and returns training and validation datasets for LSTM modeling.
+
+    This function processes historical data of a cryptocurrency symbol, generates
+    features and targets suitable for LSTM training, and splits the data into
+    training and validation datasets.
+
+    Parameters:
+    - symbol (str): Cryptocurrency pair symbol, e.g., "BTC/USDT".
+    - valid_split (int): The number of data points to be used for the validation set.
+    - train_length (int): The length of each input sequence for the LSTM.
+    - batch_size (int): Batch size for training and validation datasets.
+    - seed (int, optional): Seed for random number generator.
+
+    Returns:
+    - Tuple[tf.data.Dataset, tf.data.Dataset]: A tuple containing the training and
+      validation datasets, respectively.
+
+    The datasets will be in a format suitable for training an LSTM model, with
+    input sequences of `train_length` and corresponding targets.
+    """
+
+    df = get_features_and_target(
+        symbol, day_to_forecast=1, feature_lags=[3, 9, 16, 24], model="LSTM"
+    )
+
+    symbol = symbol.replace("/", ":")
+
+    X = StandardScaler().fit_transform(df.drop(columns=f"{symbol}_target"))
+
+    y = df[f"{symbol}_target"].copy()
+
+    X_train, X_valid, y_train, y_valid = (
+        X[:-valid_split],
+        X[-valid_split:],
+        y[:-valid_split],
+        y[-valid_split:],
+    )
+
+    train_df = tf.keras.utils.timeseries_dataset_from_array(
+        X_train,
+        targets=y_train[train_length:],
+        sequence_length=train_length,
+        batch_size=batch_size,
+        shuffle=True,  # Shaffles the sequences, not within sequences
+        seed=seed,
+    )
+
+    valid_df = tf.keras.utils.timeseries_dataset_from_array(
+        X_valid,
+        targets=y_valid[train_length:],
+        sequence_length=train_length,
+        batch_size=batch_size,
+        shuffle=True,
+        seed=seed,
+    )
+
+    return train_df, valid_df
