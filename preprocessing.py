@@ -285,6 +285,7 @@ def get_ML_dfs(
 
 def get_LSTM_dfs(
     symbol: str = "BTC/USDT",
+    feature_lags=[3, 9, 16, 24],
     valid_split: int = 1000,
     train_length: int = 48,
     batch_size: int = 32,
@@ -313,7 +314,7 @@ def get_LSTM_dfs(
     """
 
     df = get_features_and_target(
-        symbol, day_to_forecast=1, feature_lags=[3, 9, 16, 24], model="LSTM"
+        symbol, day_to_forecast=1, feature_lags=feature_lags, model="LSTM"
     )
 
     symbol = symbol.replace("/", ":")
@@ -334,7 +335,7 @@ def get_LSTM_dfs(
         targets=y_train[train_length:],
         sequence_length=train_length,
         batch_size=batch_size,
-        shuffle=True,  # Shaffles the sequences, not within sequences
+        shuffle=False,  # Shaffles the sequences, not within sequences
         seed=seed,
     )
 
@@ -343,7 +344,7 @@ def get_LSTM_dfs(
         targets=y_valid[train_length:],
         sequence_length=train_length,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=False,
         seed=seed,
     )
 
