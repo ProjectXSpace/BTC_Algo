@@ -60,51 +60,97 @@ def fetch_crypto_data(symbol: str, timeframe: str, start_date: str) -> pd.DataFr
     return df
 
 
-def add_regression_target(
-    df: pd.DataFrame, symbol: str, day_to_forecast: int
+def add_ML_regression_target(
+    df: pd.DataFrame, symbol: str, days_to_forecast: int
 ) -> pd.DataFrame:
     """
     Adds a target column to the DataFrame for forecasting.
 
     :param df: Pandas DataFrame containing the historical data.
     :param symbol: The symbol for the cryptocurrency pair.
-    :param day_to_forecast: Number of days to forecast.
+    :param days_to_forecast: Number of days to forecast.
     :return: DataFrame with the target column added.
     """
     symbol = symbol.replace("/", ":")
-    days_to_shift = day_to_forecast * 24
+    days_to_shift = days_to_forecast * 24
     df[f"{symbol}_target"] = (
         df[f"{symbol}_close"].pct_change(periods=days_to_shift).shift(-days_to_shift)
     )
     return df
 
+def add_ML_class_target(
+    df: pd.DataFrame, symbol: str, days_to_forecast: int, class_threshold = 0.03
+) -> pd.DataFrame:
+    """
+    Adds a target column to the DataFrame for forecasting.
 
-def add_LSTM_target(
-    df: pd.DataFrame, symbol: str, day_to_forecast: int
+    :param df: Pandas DataFrame containing the historical data.
+    :param symbol: The symbol for the cryptocurrency pair.
+    :param days_to_forecast: Number of days to forecast.
+    :return: DataFrame with the target column added.
+    """
+    symbol = symbol.replace("/", ":")
+    days_to_shift = days_to_forecast * 24
+    df[f"{symbol}_target"] = (
+        df[f"{symbol}_close"].pct_change(periods=days_to_shift).shift(-days_to_shift)
+    )
+     # Applying the classification logic based on the threshold
+    df.loc[df[f"{symbol}_target"] > class_threshold, f"{symbol}_target"] = 1
+    df.loc[df[f"{symbol}_target"] < -class_threshold, f"{symbol}_target"] = -1
+    df.loc[(df[f"{symbol}_target"] <= class_threshold) & (df[f"{symbol}_target"] >= -class_threshold), f"{symbol}_target"] = 0
+
+    return df
+
+
+def add_LSTM_regression_target(
+    df: pd.DataFrame, symbol: str, days_to_forecast: int, 
 ) -> pd.DataFrame:
     symbol = symbol.replace("/", ":")
-    days_to_shift = day_to_forecast * 24
+    days_to_shift = days_to_forecast * 24
     df[f"{symbol}_target"] = (
         df[f"{symbol}_close"]
         .pct_change(periods=days_to_shift)
         .shift(-(days_to_shift - 1))
     )
+    
+    return df
+
+def add_LSTM_class_target(
+    df: pd.DataFrame, symbol: str, days_to_forecast: int, class_threshold = 0.03
+) -> pd.DataFrame:
+    symbol = symbol.replace("/", ":")
+    days_to_shift = days_to_forecast * 24
+    df[f"{symbol}_target"] = (
+        df[f"{symbol}_close"]
+        .pct_change(periods=days_to_shift)
+        .shift(-(days_to_shift - 1))
+    )
+    
+    # Applying the classification logic based on the threshold
+    df.loc[df[f"{symbol}_target"] > class_threshold, f"{symbol}_target"] = 2
+    df.loc[df[f"{symbol}_target"] < -class_threshold, f"{symbol}_target"] = 1
+    df.loc[(df[f"{symbol}_target"] <= class_threshold) & (df[f"{symbol}_target"] >= -class_threshold), f"{symbol}_target"] = 0
 
     return df
+
+
+    
 
 
 def get_features_and_target(
     symbol: str,
     feature_lags: List[int] = [3, 9, 16],
-    day_to_forecast: int = 7,
+    days_to_forecast: int = 1,
+    class_threshold = 0.03,
     model="ML",
+    model_type = "reg"
 ) -> pd.DataFrame:
     """
     Generates features and target variable for the given cryptocurrency symbol.
 
     :param symbol: The symbol for the cryptocurrency pair.
     :param feature_lags: List of integers representing the lags for feature generation.
-    :param day_to_forecast: Number of days to forecast.
+    :param days_to_forecast: Number of days to forecast.
     :param model: ML or LSTM, changes how the target is encoded
     :return: DataFrame with features and target.
     """
@@ -215,12 +261,20 @@ def get_features_and_target(
         features_df[f"{symbol}_aroon_down_delta_{lag}"] = aroon_down.diff(lag)
 
     # Add target and handle missing values
-    if model == "ML":
-        features_df = add_regression_target(features_df, symbol, day_to_forecast)
-    elif model == "LSTM":
-        features_df = add_LSTM_target(features_df, symbol, day_to_forecast)
-    else:
-        raise ValueError("not supported model")
+    if model_type == "reg":
+        if model == "ML":
+            features_df = add_ML_regression_target(features_df, symbol, days_to_forecast)
+        elif model == "LSTM":
+            features_df = add_LSTM_regression_target(features_df, symbol, days_to_forecast)
+        else:
+            raise ValueError("not supported model")
+    elif model_type == "class":
+        if model == "ML":
+            features_df = add_ML_class_target(features_df, symbol, days_to_forecast)
+        elif model == "LSTM":
+            features_df = add_LSTM_class_target(features_df, symbol, days_to_forecast)
+        else:
+            raise ValueError("not supported model")
 
     features_df.drop(
         columns=[
@@ -241,7 +295,7 @@ def get_features_and_target(
 def get_ML_dfs(
     symbol: str,
     feature_lags: List[int] = [3, 9, 16],
-    day_to_forecast: int = 7,
+    days_to_forecast: int = 7,
     random_state: int = 99,
     fetch_data_params: Optional[Dict[str, any]] = None,
     testing_hours: Optional[int] = None,
@@ -251,7 +305,7 @@ def get_ML_dfs(
 
     :param symbol: The symbol for the cryptocurrency pair (e.g., 'BTC/USDT').
     :param feature_lags: List of integers representing the lags for feature generation.
-    :param day_to_forecast: Number of days ahead to forecast.
+    :param days_to_forecast: Number of days ahead to forecast.
     :param random_state: An integer seed for random number generator for reproducible splits. Used only when 'testing_hours' is None.
     :param fetch_data_params: Optional dictionary of parameters to pass to the fetch_crypto_data function. If provided, new data is fetched using these parameters.
     :param testing_hours: Optional integer specifying the number of latest data points to use for the test set. If provided, splits the data into training and test sets based on this value. If None, performs a standard train-test split.
@@ -263,7 +317,7 @@ def get_ML_dfs(
     if fetch_data_params is not None:
         fetch_crypto_data(symbol, **fetch_data_params)
 
-    df = get_features_and_target(symbol_modified, feature_lags, day_to_forecast)
+    df = get_features_and_target(symbol_modified, feature_lags, days_to_forecast)
     X = df.drop(columns=f"{symbol_modified}_target")
     y = df[f"{symbol_modified}_target"].copy()
 
@@ -314,12 +368,12 @@ def get_LSTM_dfs(
     """
 
     df = get_features_and_target(
-        symbol, day_to_forecast=1, feature_lags=feature_lags, model="LSTM"
+        symbol, days_to_forecast=1, feature_lags=feature_lags, model="LSTM"
     )
 
     symbol = symbol.replace("/", ":")
 
-    X = StandardScaler().fit_transform(df.drop(columns=f"{symbol}_target"))
+    X = df.drop(columns=f"{symbol}_target")
 
     y = df[f"{symbol}_target"].copy()
 
