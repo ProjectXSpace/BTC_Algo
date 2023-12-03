@@ -88,10 +88,10 @@ def update_crypto_data(symbol: str, timeframe: str):
     return updated_df
 
 def add_regression_target(
-    df: pd.DataFrame, symbol: str, days_to_forecast: int, timeframe: str
+    df: pd.DataFrame, symbol: str, steps_to_forecast: int, timeframe: str
 ) -> pd.DataFrame:
     symbol = symbol.replace("/", ":")
-    shift = days_to_forecast * (24 if timeframe == "1h" else 1)
+    shift = steps_to_forecast * (24 if timeframe == "1h" else 1)
     df[f"{symbol}_target"] = (
         df[f"{symbol}_close"].pct_change(periods=shift).shift(-shift)
     )
@@ -102,11 +102,11 @@ def add_class_target(
     df: pd.DataFrame,
     symbol: str,
     timeframe: str,
-    days_to_forecast: int,
+    steps_to_forecast: int,
     class_threshold=0.03,
 ) -> pd.DataFrame:
     symbol = symbol.replace("/", ":")
-    shift = days_to_forecast * (24 if timeframe == "1h" else 1)
+    shift = steps_to_forecast * (24 if timeframe == "1h" else 1)
     df[f"{symbol}_target"] = (
         df[f"{symbol}_close"].pct_change(periods=shift).shift(-shift)
     )
@@ -128,7 +128,7 @@ def add_class_target(
 def get_features_and_target(
     symbol: str,
     feature_lags: List[int] = [3, 9, 16],
-    days_to_forecast: int = 1,
+    steps_to_forecast: int = 1,
     class_threshold=0.03,
     model_type="reg",
     model_freq="1h",
@@ -245,7 +245,7 @@ def get_features_and_target(
         features_df = add_regression_target(
             df=features_df,
             symbol=symbol,
-            days_to_forecast=days_to_forecast,
+            steps_to_forecast=steps_to_forecast,
             timeframe=model_freq,
         )
     elif model_type == "class":
@@ -253,7 +253,7 @@ def get_features_and_target(
             df=features_df,
             timeframe=model_freq,
             symbol=symbol,
-            days_to_forecast=days_to_forecast,
+            steps_to_forecast=steps_to_forecast,
             class_threshold=class_threshold,
         )
     else:
@@ -278,7 +278,7 @@ def get_features_and_target(
 def get_ML_dfs(
     symbol: str,
     feature_lags: List[int] = [3, 9, 16],
-    days_to_forecast: int = 7,
+    steps_to_forecast: int = 7,
     random_state: int = 99,
     fetch_data_params: Optional[Dict[str, any]] = None,
     testing_hours: Optional[int] = None,
@@ -288,7 +288,7 @@ def get_ML_dfs(
 
     :param symbol: The symbol for the cryptocurrency pair (e.g., 'BTC/USDT').
     :param feature_lags: List of integers representing the lags for feature generation.
-    :param days_to_forecast: Number of days ahead to forecast.
+    :param steps_to_forecast: Number of days ahead to forecast.
     :param random_state: An integer seed for random number generator for reproducible splits. Used only when 'testing_hours' is None.
     :param fetch_data_params: Optional dictionary of parameters to pass to the fetch_crypto_data function. If provided, new data is fetched using these parameters.
     :param testing_hours: Optional integer specifying the number of latest data points to use for the test set. If provided, splits the data into training and test sets based on this value. If None, performs a standard train-test split.
@@ -300,7 +300,7 @@ def get_ML_dfs(
     if fetch_data_params is not None:
         fetch_crypto_data(symbol, **fetch_data_params)
 
-    df = get_features_and_target(symbol_modified, feature_lags, days_to_forecast)
+    df = get_features_and_target(symbol_modified, feature_lags, steps_to_forecast)
     X = df.drop(columns=f"{symbol_modified}_target")
     y = df[f"{symbol_modified}_target"].copy()
 
