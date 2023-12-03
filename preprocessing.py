@@ -9,14 +9,6 @@ from sklearn.preprocessing import StandardScaler
 
 
 def fetch_crypto_data(symbol: str, timeframe: str, start_date: str) -> pd.DataFrame:
-    """
-    Fetches historical cryptocurrency data from Binance using the ccxt library.
-
-    :param symbol: The symbol for the cryptocurrency pair (e.g., 'BTC/USDT').
-    :param timeframe: Timeframe for the data (e.g., '1d' for daily).
-    :param start_date: Start date for data in 'YYYY-MM-DD' format.
-    :return: Pandas DataFrame containing the OHLCV data.
-    """
     exchange = ccxt.binance()
     limit = 1000
     since = exchange.parse8601(f"{start_date}T00:00:00Z")
@@ -57,53 +49,79 @@ def fetch_crypto_data(symbol: str, timeframe: str, start_date: str) -> pd.DataFr
     )
     df.set_index(f"{symbol_modified}_timestamp", inplace=True)
 
+    file_name = f"{symbol.replace('/', ':')}_price_{timeframe}freq.csv"
+    df.to_csv(file_name)
+
     return df
 
+def update_crypto_data(symbol: str, timeframe: str):
+    # Modify the symbol for the file name
+    modified_symbol = symbol.replace('/', ':')
+
+    file_name = f"{modified_symbol}_price_{timeframe}freq.csv"
+
+    # Load existing DataFrame
+    try:
+        existing_df = pd.read_csv(file_name, index_col=0)
+        existing_df.index = pd.to_datetime(existing_df.index)
+    except FileNotFoundError:
+        print(f"No existing data found for {symbol} with {timeframe} timeframe. Fetching new data.")
+        existing_df = pd.DataFrame()
+
+    # Determine the last timestamp in the existing DataFrame
+    if not existing_df.empty:
+        last_timestamp = existing_df.index[-1]
+        new_data_start_date = (last_timestamp + pd.Timedelta(hours=1) if timeframe == "1h" else last_timestamp + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+    else:
+        new_data_start_date = "2017-08-17"  # Default start date
+
+    # Fetch new data starting from the last timestamp
+    # Ensure the symbol format matches what fetch_crypto_data expects
+    new_df = fetch_crypto_data(symbol, timeframe, new_data_start_date)
+
+    # Concatenate the old and new data
+    updated_df = pd.concat([existing_df, new_df]).drop_duplicates()
+
+    # Save the updated DataFrame back to CSV
+    updated_df.to_csv(file_name)
+
+    return updated_df
 
 def add_regression_target(
-    df: pd.DataFrame, symbol: str, days_to_forecast: int
+    df: pd.DataFrame, symbol: str, days_to_forecast: int, timeframe: str
 ) -> pd.DataFrame:
-    """
-    Adds a target column to the DataFrame for forecasting.
-
-    :param df: Pandas DataFrame containing the historical data.
-    :param symbol: The symbol for the cryptocurrency pair.
-    :param days_to_forecast: Number of days to forecast.
-    :return: DataFrame with the target column added.
-    """
     symbol = symbol.replace("/", ":")
-    days_to_shift = days_to_forecast * 24
+    shift = days_to_forecast * (24 if timeframe == "1h" else 1)
     df[f"{symbol}_target"] = (
-        df[f"{symbol}_close"].pct_change(periods=days_to_shift).shift(-days_to_shift)
+        df[f"{symbol}_close"].pct_change(periods=shift).shift(-shift)
     )
     return df
 
 
 def add_class_target(
-    df: pd.DataFrame, symbol: str, days_to_forecast: int, class_threshold=0.03
+    df: pd.DataFrame,
+    symbol: str,
+    timeframe: str,
+    days_to_forecast: int,
+    class_threshold=0.03,
 ) -> pd.DataFrame:
-    """
-    Adds a target column to the DataFrame for forecasting.
-
-    :param df: Pandas DataFrame containing the historical data.
-    :param symbol: The symbol for the cryptocurrency pair.
-    :param days_to_forecast: Number of days to forecast.
-    :return: DataFrame with the target column added.
-    """
     symbol = symbol.replace("/", ":")
-    days_to_shift = days_to_forecast * 24
+    shift = days_to_forecast * (24 if timeframe == "1h" else 1)
     df[f"{symbol}_target"] = (
-        df[f"{symbol}_close"].pct_change(periods=days_to_shift).shift(-days_to_shift)
+        df[f"{symbol}_close"].pct_change(periods=shift).shift(-shift)
     )
     # Applying the classification logic based on the threshold
-    df.loc[df[f"{symbol}_target"] > class_threshold, f"{symbol}_target"] = 2 # Buy position
-    df.loc[df[f"{symbol}_target"] < -class_threshold, f"{symbol}_target"] = 1 # Short position
+    df.loc[
+        df[f"{symbol}_target"] > class_threshold, f"{symbol}_target"
+    ] = 2  # Buy position
+    df.loc[
+        df[f"{symbol}_target"] < -class_threshold, f"{symbol}_target"
+    ] = 1  # Short position
     df.loc[
         (df[f"{symbol}_target"] <= class_threshold)
         & (df[f"{symbol}_target"] >= -class_threshold),
         f"{symbol}_target",
-    ] = 0 # Hold
-
+    ] = 0  # Hold
     return df
 
 
@@ -113,21 +131,15 @@ def get_features_and_target(
     days_to_forecast: int = 1,
     class_threshold=0.03,
     model_type="reg",
+    model_freq="1h",
 ) -> pd.DataFrame:
-    """
-    Generates features and target variable for the given cryptocurrency symbol.
-
-    :param symbol: The symbol for the cryptocurrency pair.
-    :param feature_lags: List of integers representing the lags for feature generation.
-    :param days_to_forecast: Number of days to forecast.
-    :param model: ML or LSTM, changes how the target is encoded
-    :return: DataFrame with features and target.
-    """
     symbol = symbol.replace("/", ":")
-    features_df = pd.read_csv(
-        f"{symbol}_price_data.csv", parse_dates=True, index_col=f"{symbol}_timestamp"
-    )
 
+    features_df = pd.read_csv(
+        f"{symbol}_price_{model_freq}freq.csv",
+        parse_dates=True,
+        index_col=f"{symbol}_timestamp",
+    )
     required_columns = [
         f"{symbol}_close",
         f"{symbol}_high",
@@ -138,7 +150,7 @@ def get_features_and_target(
         raise ValueError("Required columns are missing in the DataFrame")
 
     # Moving Averages
-    for ma in [9, 20, 50, 200]:
+    for ma in [9, 20, 50]:
         features_df[f"{symbol}_sma_{ma}"] = talib.SMA(
             features_df[f"{symbol}_close"], timeperiod=ma
         )
@@ -229,15 +241,23 @@ def get_features_and_target(
         features_df[f"{symbol}_aroon_up_delta_{lag}"] = aroon_up.diff(lag)
         features_df[f"{symbol}_aroon_down_delta_{lag}"] = aroon_down.diff(lag)
 
-    # Add target and handle missing values
     if model_type == "reg":
-        features_df = add_regression_target(features_df, symbol, days_to_forecast)
+        features_df = add_regression_target(
+            df=features_df,
+            symbol=symbol,
+            days_to_forecast=days_to_forecast,
+            timeframe=model_freq,
+        )
     elif model_type == "class":
         features_df = add_class_target(
-            features_df, symbol, days_to_forecast, class_threshold=class_threshold
+            df=features_df,
+            timeframe=model_freq,
+            symbol=symbol,
+            days_to_forecast=days_to_forecast,
+            class_threshold=class_threshold,
         )
     else:
-        raise ValueError("not supported model")
+        raise ValueError("not supported model type")
 
     features_df.drop(
         columns=[
