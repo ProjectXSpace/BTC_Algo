@@ -1,7 +1,7 @@
 pandas_datareader
 yfinance
 imblearn
-TA-Lib-Precompiled 
+TA-Lib
 pandas
 tensorflow
 scikit-learn
